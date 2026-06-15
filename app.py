@@ -83,7 +83,7 @@ def page_upload():
             if res is not None:
                 st.session_state["run"] = res
                 st.session_state.pop("xml", None)
-                st.session_state.pop("exported", None)
+                st.session_state.pop("saved", None)
 
     res = st.session_state.get("run")
     if not res:
@@ -99,25 +99,27 @@ def page_upload():
         st.subheader(f"🆕 {len(res['new'])} new invoice(s)")
         st.dataframe(_df(res["new"]), use_container_width=True, hide_index=True)
 
-        if st.button("Generate Tally XML", type="primary", use_container_width=True):
-            settings = db.get_settings()
-            st.session_state["xml"] = build_tally_xml(res["new"], settings, db.get_supplier_map())
+        # One click: build the Tally XML AND remember these invoices, so the same
+        # ZIP won't ever be exported twice.
+        if not st.session_state.get("saved"):
+            if st.button("📥 Make Tally file & remember these invoices",
+                         type="primary", use_container_width=True):
+                settings = db.get_settings()
+                st.session_state["xml"] = build_tally_xml(res["new"], settings, db.get_supplier_map())
+                for rec in res["new"]:
+                    db.insert_invoice(rec)
+                st.session_state["saved"] = True
+                st.rerun()
+        else:
+            st.success(f"✅ Saved {len(res['new'])} invoice(s) to memory — re-uploading the "
+                       "same ZIP will now show them as duplicates (0 new).")
 
         if st.session_state.get("xml"):
             stamp = dt.datetime.now().strftime("%Y%m%d-%H%M")
             st.download_button("⬇️ Download Tally XML", st.session_state["xml"],
                                file_name=f"tally-purchase-{stamp}.xml",
                                mime="application/xml", use_container_width=True)
-            st.info("After you've saved the XML, click below so these invoices are "
-                    "remembered and never exported again.")
-            if not st.session_state.get("exported"):
-                if st.button("✅ Mark as exported (save to memory)", use_container_width=True):
-                    for rec in res["new"]:
-                        db.insert_invoice(rec)
-                    st.session_state["exported"] = True
-                    st.success(f"Saved {len(res['new'])} invoice(s) to memory. Re-uploading won't re-export them.")
-            else:
-                st.success("Already saved to memory.")
+            st.caption("Import this file into Tally Prime: Gateway → Import → Vouchers.")
 
     if res["flagged"]:
         st.subheader(f"⚠️ {len(res['flagged'])} flagged for review (not exported)")
