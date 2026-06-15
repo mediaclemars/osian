@@ -8,6 +8,10 @@ import zipfile
 
 from invoice_parser import extract_text, looks_like_tax_invoice, parse_invoice
 
+# Skip any single PDF that decompresses above this, so a pathological/zip-bomb
+# member can't blow the ~1 GB free-host memory. A real invoice PDF is tiny.
+MAX_PDF_UNCOMPRESSED = 50 * 1024 * 1024  # 50 MB
+
 
 def pdf_names(zip_bytes):
     """Open the zip and return (zipfile, [pdf member names anywhere inside])."""
@@ -33,7 +37,19 @@ def classify_zip(zip_bytes, exists_fn, on_progress=None):
         fname = name.split("/")[-1]
         text = ""
         try:
-            text = extract_text(zf.read(name))  # one PDF in memory at a time
+            if zf.getinfo(name).file_size > MAX_PDF_UNCOMPRESSED:
+                res["unreadable"].append(f"{fname} (too large, skipped)")
+                if on_progress:
+                    on_progress(i, total)
+                continue
+            with zf.open(name) as fh:               # bounded read (declared size can lie)
+                data = fh.read(MAX_PDF_UNCOMPRESSED + 1)
+            if len(data) > MAX_PDF_UNCOMPRESSED:
+                res["unreadable"].append(f"{fname} (too large, skipped)")
+                if on_progress:
+                    on_progress(i, total)
+                continue
+            text = extract_text(data)               # one PDF in memory at a time
         except Exception:
             text = ""
         try:

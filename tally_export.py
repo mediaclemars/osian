@@ -35,7 +35,8 @@ def _ledger_entry(name, amount, is_debit):
 
 
 def build_voucher(inv, settings, supplier_map):
-    party = supplier_map.get(inv.get("supplier_name") or "", inv.get("supplier_name") or "Sundry Creditors")
+    name = inv.get("supplier_name")
+    party = (supplier_map.get(name, name) if name else "Sundry Creditors")
     vtype = settings.get("voucher_type", "Purchase")
     date = _date(inv.get("invoice_date"))
     vno = inv.get("invoice_number") or ""

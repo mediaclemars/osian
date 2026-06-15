@@ -14,8 +14,11 @@ same logic is unit-tested directly against the sample text.
 """
 
 import re
+from collections import Counter
+from datetime import date
 
 GSTIN_RE = r"\d{2}[A-Z]{5}\d{4}[A-Z][0-9A-Z]Z[0-9A-Z]"
+PAN_RE = r"[A-Z]{5}[0-9]{4}[A-Z]"
 AMOUNT_RE = r"-?\s*₹?\s*([0-9][0-9,]*\.\d{2})"
 
 
@@ -59,25 +62,41 @@ def _first(pattern, text, flags=re.IGNORECASE):
 
 
 def _normalize_date(d):
-    """02.06.2026 / 02-06-2026 / 02/06/2026 -> 2026-06-02 (ISO)."""
+    """02.06.2026 / 02-06-2026 / 02/06/2026 -> 2026-06-02 (ISO). None if invalid."""
     if not d:
         return None
     m = re.match(r"(\d{2})[.\-/](\d{2})[.\-/](\d{4})", d.strip())
     if not m:
-        return d
+        return None
     dd, mm, yyyy = m.groups()
-    return f"{yyyy}-{mm}-{dd}"
+    try:
+        return date(int(yyyy), int(mm), int(dd)).isoformat()  # rejects month 13, day 32, etc.
+    except ValueError:
+        return None
 
 
 def _supplier_gstin(text):
-    """Seller GSTIN = the GST Registration No that follows 'PAN No:' (Sold By block)."""
-    m = re.search(r"PAN No\s*:\s*[A-Z0-9]+.*?GST Registration No\s*:\s*(" + GSTIN_RE + r")",
-                  text, re.IGNORECASE | re.DOTALL)
+    """
+    Seller GSTIN, found in a layout-proof way (the two-column PDF can interleave
+    'Sold By' and 'Billing Address' text, so we don't rely on position):
+      1) the GSTIN that CONTAINS the seller PAN (a GSTIN embeds its PAN) — exact link;
+      2) else the GST Reg right after 'PAN No:';
+      3) else the GSTIN appearing fewest times (buyer repeats in billing+shipping).
+    """
+    pan = _first(r"PAN No\s*:\s*(" + PAN_RE + r")", text)
+    if pan:
+        m = re.search(r"(\d{2}" + re.escape(pan) + r"[0-9A-Z]Z[0-9A-Z])", text)
+        if m:
+            return m.group(1)
+    m = re.search(r"PAN No\s*:\s*[A-Z0-9]+\s*GST Registration No\s*:\s*(" + GSTIN_RE + r")",
+                  text, re.IGNORECASE)
     if m:
         return m.group(1)
-    # fallback: first GSTIN in the document
-    m = re.search(GSTIN_RE, text)
-    return m.group(0) if m else None
+    gstins = re.findall(GSTIN_RE, text)
+    if gstins:
+        counts = Counter(gstins)
+        return min(gstins, key=lambda g: (counts[g], gstins.index(g)))
+    return None
 
 
 def _buyer_gstin(text, supplier):
@@ -88,11 +107,20 @@ def _buyer_gstin(text, supplier):
 
 
 def _supplier_name(text):
+    """
+    Seller name, layout-proof: prefer the full-width 'For <NAME>: Authorized
+    Signatory' line (never interleaves); else the line after 'Sold By :', guarding
+    against accidentally grabbing the 'Billing Address' header.
+    """
+    m = re.search(r"For\s+([A-Z][A-Za-z0-9 &.\-]+?)\s*:\s*(?:\n\s*)?Authorized Signatory", text)
+    if m:
+        return m.group(1).strip()
     m = re.search(r"Sold By\s*:\s*\n?\s*([^\n]+)", text, re.IGNORECASE)
-    if not m:
-        return None
-    name = m.group(1).strip().rstrip("*").strip()
-    return name or None
+    if m:
+        name = m.group(1).strip().rstrip("*").strip()
+        if name and "Billing" not in name and "Address" not in name and "GST" not in name:
+            return name
+    return None
 
 
 def _totals(text):
@@ -132,10 +160,11 @@ def _line_items(text):
 
 def parse_invoice(text, source_file=""):
     """Extract all fields + reconciliation flags from one invoice's text."""
+    raw_date = _first(r"Invoice Date\s*:\s*([\d./\-]{8,10})", text)
     rec = {
         "source_file": source_file,
         "invoice_number": _first(r"Invoice Number\s*:\s*([A-Z0-9][A-Z0-9\-]+)", text),
-        "invoice_date": _normalize_date(_first(r"Invoice Date\s*:\s*([\d./\-]{8,10})", text)),
+        "invoice_date": _normalize_date(raw_date),
         "order_number": _first(r"Order Number\s*:\s*([0-9\-]+)", text),
         "supplier_name": _supplier_name(text),
         "supplier_gstin": None,
@@ -194,6 +223,8 @@ def parse_invoice(text, source_file=""):
         flags.append("invoice number not found")
     if not rec["supplier_gstin"]:
         flags.append("supplier GSTIN not found")
+    if raw_date and not rec["invoice_date"]:
+        flags.append("invalid invoice date")
 
     rec["flags"] = flags
     rec["reconciled"] = len(flags) == 0

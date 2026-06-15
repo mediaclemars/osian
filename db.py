@@ -5,9 +5,14 @@ never in code. Tables are created automatically on first run.
 """
 
 import re
+import threading
 import psycopg2
 import psycopg2.extras
 import streamlit as st
+
+# The DB connection is cached and shared across sessions/threads; serialize
+# access so two devices using the app at once can't clash on one connection.
+_lock = threading.Lock()
 
 # ---- default Tally settings (editable on the Settings page) ----
 DEFAULT_SETTINGS = {
@@ -47,20 +52,21 @@ def get_conn():
 
 def run(sql, params=(), fetch=None):
     """Execute SQL, reconnecting once if the cached connection went stale."""
-    for attempt in (1, 2):
-        try:
-            conn = get_conn()
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(sql, params)
-                if fetch == "one":
-                    return cur.fetchone()
-                if fetch == "all":
-                    return cur.fetchall()
-                return None
-        except (psycopg2.OperationalError, psycopg2.InterfaceError):
-            if attempt == 2:
-                raise
-            get_conn.clear()
+    with _lock:
+        for attempt in (1, 2):
+            try:
+                conn = get_conn()
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(sql, params)
+                    if fetch == "one":
+                        return cur.fetchone()
+                    if fetch == "all":
+                        return cur.fetchall()
+                    return None
+            except (psycopg2.OperationalError, psycopg2.InterfaceError):
+                if attempt == 2:
+                    raise
+                get_conn.clear()
 
 
 def init_db():

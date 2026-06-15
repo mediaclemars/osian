@@ -137,6 +137,35 @@ def main():
     assert s["supplier_gstin"] == "09AALCR3173P1ZL" and s["reconciled"], s
     f = parse_invoice(LKO1_575)
     assert f["total"] == 10510.06 and f["taxable"] == 10009.58 and f["reconciled"], f
+
+    # robustness: worst-case two-column INTERLEAVE (pdfplumber merges Sold By +
+    # Billing). Must still pick the SUPPLIER gstin/name, not the buyer (Osian).
+    INTERLEAVED = (
+        "Tax Invoice/Bill of Supply/Cash Memo\n"
+        "Order Number: 404-5984987-6407514 Invoice Number : DEL5-683907\n"
+        "Invoice Date : 02.06.2026\n"
+        "1 Item HSN:95065910\n"
+        "453.33 -18.13 18 7833.60 5% IGST 391.68 8225.28\n"
+        "Sold By : Billing Address :\n"
+        "RETAILEZ PRIVATE LIMITED OSIAN SPORTS\n"
+        "PAN No: AALCR3173P GST Registration No: 29AAJFO7029G1ZY\n"
+        "GST Registration No: 06AALCR3173P1ZR State/UT Code: 29\n"
+        "Shipping Address : OSIAN SPORTS\n"
+        "GST Registration No: 29AAJFO7029G1ZY\n"
+        "TOTAL: 391.68 8225.28\n"
+        "For RETAILEZ PRIVATE LIMITED: Authorized Signatory\n"
+    )
+    iv = parse_invoice(INTERLEAVED)
+    assert iv["supplier_gstin"] == "06AALCR3173P1ZR", ("interleave gstin", iv["supplier_gstin"])
+    assert iv["supplier_name"] == "RETAILEZ PRIVATE LIMITED", ("interleave name", iv["supplier_name"])
+    assert iv["buyer_gstin"] == "29AAJFO7029G1ZY", iv["buyer_gstin"]
+    print("Interleaved layout: supplier GSTIN + name correct (not the buyer).")
+
+    # an invalid date must be flagged (routed to review), never silently exported
+    bad = parse_invoice(DEL5.replace("Invoice Date : 02.06.2026", "Invoice Date : 32.13.2026"))
+    assert bad["invoice_date"] is None and "invalid invoice date" in bad["flags"] and not bad["reconciled"], bad
+    print("Invalid date correctly flagged (not exported).")
+
     print("\nALL ASSERTIONS PASSED - extraction matches the real samples.")
 
 

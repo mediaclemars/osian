@@ -39,4 +39,11 @@ names2 = [n.firstChild.data for n in v2.getElementsByTagName("LEDGERNAME")]
 assert "Acme Traders (Maharashtra)" in names2, names2
 assert "Input CGST" in names2 and "Input SGST" in names2, names2
 
-print("Tally XML OK: well-formed, both vouchers balance, ledgers + supplier mapping correct.")
+# a missing supplier name must fall back to "Sundry Creditors" (never a blank ledger)
+nv = build_tally_xml(
+    [{"invoice_number": "X1", "invoice_date": "2026-06-02", "taxable": 100,
+      "igst": 5, "cgst": 0, "sgst": 0, "total": 105, "tax_type": "IGST"}],
+    SETTINGS, {})
+assert "Sundry Creditors" in nv, "missing supplier name should fall back to Sundry Creditors"
+
+print("Tally XML OK: well-formed, both vouchers balance, ledgers + supplier mapping + fallback correct.")

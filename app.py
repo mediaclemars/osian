@@ -5,6 +5,7 @@ Password-gated. Reads secrets: APP_PASSWORD, DB_URL. Persists to Supabase Postgr
 
 import io
 import zipfile
+import logging
 import datetime as dt
 
 import pandas as pd
@@ -43,8 +44,10 @@ def ensure_db():
         st.stop()
     try:
         db.init_db()
-    except Exception as e:
-        st.error(f"Could not connect to the database. Check DB_URL in secrets.\n\n{e}")
+    except Exception:
+        logging.getLogger(__name__).exception("DB connection failed")  # detail -> server logs only
+        st.error("Could not connect to the database. Check the DB_URL in Settings → Secrets "
+                 "(use the Session pooler string, not the direct one).")
         st.stop()
 
 
@@ -107,7 +110,10 @@ def page_upload():
                 settings = db.get_settings()
                 st.session_state["xml"] = build_tally_xml(res["new"], settings, db.get_supplier_map())
                 for rec in res["new"]:
-                    db.insert_invoice(rec)
+                    try:
+                        db.insert_invoice(rec)
+                    except Exception:
+                        logging.getLogger(__name__).exception("insert failed: %s", rec.get("invoice_number"))
                 st.session_state["saved"] = True
                 st.rerun()
         else:
@@ -149,7 +155,7 @@ def page_report():
     q = st.text_input("🔎 Search (invoice no, supplier, order, GSTIN)")
     if q:
         ql = q.lower()
-        mask = df.apply(lambda r: ql in " ".join(str(v).lower() for v in r.values), axis=1)
+        mask = df.apply(lambda r: ql in " ".join(str(v).lower() for v in r.values if pd.notna(v)), axis=1)
         df = df[mask]
     st.caption(f"{len(df)} invoice(s)")
     st.dataframe(df, use_container_width=True, hide_index=True)
@@ -196,8 +202,9 @@ def page_settings():
         sup = c1.text_input("Supplier name (exactly as on invoice)")
         led = c2.text_input("Tally party ledger name")
         if st.form_submit_button("Add / update mapping", use_container_width=True):
+            sup, led = sup.strip(), led.strip()
             if sup and led:
-                db.save_supplier_map(sup.strip(), led.strip())
+                db.save_supplier_map(sup, led)
                 st.success("Mapping saved.")
                 st.rerun()
 
