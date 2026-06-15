@@ -1,0 +1,11 @@
+# NEVER commit real secrets
+.streamlit/secrets.toml
+
+# local sample invoices / test files
+samples/
+*.zip
+*.pdf
+
+__pycache__/
+*.pyc
+.DS_Store

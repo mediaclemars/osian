@@ -1,0 +1,8 @@
+[server]
+# Raise the upload limit so larger invoice ZIPs are accepted (MB).
+# The free host has ~1 GB RAM, so very large ZIPs should be split.
+maxUploadSize = 400
+
+[theme]
+base = "light"
+primaryColor = "#ff9900"
