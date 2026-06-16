@@ -165,7 +165,7 @@ def page_report():
                        "invoices.csv", "text/csv", use_container_width=True)
     xbuf = io.BytesIO()
     with pd.ExcelWriter(xbuf, engine="openpyxl") as w:
-        df.to_excel(w, index=False, sheet_name="Invoices")
+        _excel_safe(df).to_excel(w, index=False, sheet_name="Invoices")
     c2.download_button("⬇️ Excel", xbuf.getvalue(), "invoices.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        use_container_width=True)
@@ -220,6 +220,18 @@ def _row(r):
 
 def _df(recs):
     return pd.DataFrame([_row(r) for r in recs])
+
+
+def _excel_safe(df):
+    """Excel can't store timezone-aware datetimes (Supabase TIMESTAMPTZ). Strip tz."""
+    out = df.copy()
+    for col in out.columns:
+        if getattr(out[col].dtype, "tz", None) is not None:        # datetime64[ns, tz] column
+            out[col] = out[col].dt.tz_localize(None)
+        elif out[col].dtype == object:                             # python datetimes carrying tzinfo
+            out[col] = out[col].map(
+                lambda v: v.replace(tzinfo=None) if isinstance(v, dt.datetime) and v.tzinfo else v)
+    return out
 
 
 # --------------------------------------------------------------- main ---
